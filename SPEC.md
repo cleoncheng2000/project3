@@ -5,6 +5,8 @@ suggest activities for timeslots, vote on them, and see the day on a map. Change
 
 ## Users & access
 - No passwords. Each browser gets a random token from the server on first visit (kept in localStorage).
+  It's sent only in the `Authorization` header, rotated about daily, and expires after 90 days unused.
+  The live-updates stream uses a single-use, 60-second ticket for one trip instead.
 - Creating a trip produces an invite link (`/trip/<id>`). Opening it asks for your name, then you're a member.
 - Only members of a trip can see its contents; the server checks this on every request.
 
@@ -44,7 +46,7 @@ suggest activities for timeslots, vote on them, and see the day on a map. Change
 | Hosting | Any always-on Node host with a disk, or your own PC + a tunnel |
 
 ## Data model
-- `users(id, token, created_at)`
+- `users(id, token, created_at, token_issued_at, token_expires_at, prev_token, prev_token_expires_at)`
 - `trips(id, name, start_date, end_date, created_by, created_at)`
 - `members(trip_id, user_id, display_name, joined_at)`
 - `slots(id, trip_id, day, start_time, end_time)` — unique per (trip, day, start, end)
