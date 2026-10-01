@@ -2,7 +2,7 @@ import express from 'express'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { db } from './db.js'
+import { db, hashToken } from './db.js'
 
 const PROD = process.argv.includes('--prod')
 const PORT = Number(process.env.PORT) || 5173
@@ -32,7 +32,7 @@ function broadcast(tripId) {
 // ---------- Auth: each browser gets a random token, no passwords ----------
 
 function userFromToken(token) {
-  return token ? db.prepare('SELECT id FROM users WHERE token = ?').get(token) : undefined
+  return token ? db.prepare('SELECT id FROM users WHERE token_hash = ?').get(hashToken(token)) : undefined
 }
 
 function auth(req, _res, next) {
@@ -104,7 +104,7 @@ const api = express.Router()
 
 api.post('/session', (_req, res) => {
   const user = { id: randomUUID(), token: randomBytes(24).toString('hex') }
-  db.prepare('INSERT INTO users (id, token, created_at) VALUES (?, ?, ?)').run(user.id, user.token, now())
+  db.prepare('INSERT INTO users (id, token_hash, created_at) VALUES (?, ?, ?)').run(user.id, hashToken(user.token), now())
   res.json({ userId: user.id, token: user.token })
 })
 
@@ -282,4 +282,6 @@ if (PROD) {
   app.use(vite.middlewares)
 }
 
-app.listen(PORT, () => console.log(`Trip Planner running at http://localhost:${PORT}`))
+// Dev mode serves source files, so it's only reachable from this machine unless HOST says otherwise.
+const HOST = process.env.HOST || (PROD ? '0.0.0.0' : '127.0.0.1')
+app.listen(PORT, HOST, () => console.log(`Trip Planner running at http://localhost:${PORT}`))

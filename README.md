@@ -21,12 +21,17 @@ Create a trip and share the invite link (`/trip/<id>`). Friends need to reach th
 real use host it somewhere always-on (any Node host with a persistent disk), or share it from your
 own PC with a tunnel such as `cloudflared tunnel --url http://localhost:5173`.
 
+> **Only share `npm start`, never `npm run dev`.** The dev server serves the project's source files
+> and only listens on this machine (`127.0.0.1`), so don't tunnel it or override that with `HOST`.
+> `npm start` serves just the built app and listens on all interfaces (set `HOST` to change).
+
 > **npm certificate errors (Zscaler / corporate proxy):** run
 > `NODE_OPTIONS=--use-system-ca npm install` so Node trusts the Windows certificate store.
 
 ## How it works
 - **Identity:** each browser gets a random token (stored in localStorage); you just type your name
-  when joining. A different browser/device counts as a different person.
+  when joining. A different browser/device counts as a different person. The server only stores a
+  hash of each token.
 - **Slots:** click **+ Suggest** on an empty hour. Times default to 1 hour but can be changed.
 - **Voting:** one vote per person per slot (click again to remove). Most votes wins; ties go to the earliest suggestion.
 - **Travel** is its own suggestion type with a from/to address and mode; it's drawn as a line on the map.

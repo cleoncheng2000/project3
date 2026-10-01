@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +16,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS users (
     id          TEXT PRIMARY KEY,
-    token       TEXT NOT NULL UNIQUE,
+    token_hash  TEXT NOT NULL UNIQUE,
     created_at  TEXT NOT NULL
   );
 
@@ -74,3 +75,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS suggestions_trip ON suggestions (trip_id);
   CREATE INDEX IF NOT EXISTS votes_trip ON votes (trip_id);
 `)
+
+// Only a SHA-256 of each login token is stored, so a copy of this file can't be used to sign in.
+export const hashToken = (token) => createHash('sha256').update(token).digest('hex')
+
+// v1: older databases stored raw tokens in users.token — hash them in place.
+if (db.prepare('PRAGMA user_version').get().user_version < 1) {
+  db.exec('BEGIN')
+  if (db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'token')) {
+    db.exec('ALTER TABLE users RENAME COLUMN token TO token_hash')
+    const update = db.prepare('UPDATE users SET token_hash = ? WHERE id = ?')
+    for (const u of db.prepare('SELECT id, token_hash FROM users').all()) update.run(hashToken(u.token_hash), u.id)
+  }
+  db.exec('PRAGMA user_version = 1')
+  db.exec('COMMIT')
+  // Don't leave copies of the raw tokens in free pages or old WAL frames.
+  db.exec('VACUUM; PRAGMA wal_checkpoint(TRUNCATE);')
+}
