@@ -12,6 +12,8 @@ Requires Node.js 22.13 or newer.
 npm install
 npm run dev        # http://localhost:5173 (auto-reloads while developing)
 ```
+`npm run dev` only listens on this computer (127.0.0.1) and is for development. Don't share it
+over a tunnel or your network; use the production build below for that.
 For a production build:
 ```bash
 npm run build
@@ -19,7 +21,11 @@ npm start          # serves the built app + API on http://localhost:5173 (PORT e
 ```
 Create a trip and share the invite link (`/trip/<id>`). Friends need to reach the server, so for
 real use host it somewhere always-on (any Node host with a persistent disk), or share it from your
-own PC with a tunnel such as `cloudflared tunnel --url http://localhost:5173`.
+own PC by running `npm run build && npm start` and then a tunnel such as
+`cloudflared tunnel --url http://localhost:5173`.
+
+`data/trips.db` contains everyone's login tokens, so keep it private: never commit it, share it, or
+serve it.
 
 > **npm certificate errors (Zscaler / corporate proxy):** run
 > `NODE_OPTIONS=--use-system-ca npm install` so Node trusts the Windows certificate store.
