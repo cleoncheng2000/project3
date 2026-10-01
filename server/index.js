@@ -282,4 +282,6 @@ if (PROD) {
   app.use(vite.middlewares)
 }
 
-app.listen(PORT, () => console.log(`Trip Planner running at http://localhost:${PORT}`))
+// The dev server is for local use only: keep it off the network unless HOST says otherwise.
+const HOST = process.env.HOST || (PROD ? undefined : '127.0.0.1')
+app.listen(PORT, HOST, () => console.log(`Trip Planner running at http://localhost:${PORT}`))
