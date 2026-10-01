@@ -9,14 +9,21 @@ mkdirSync(dirname(file), { recursive: true })
 
 export const db = new DatabaseSync(file)
 
+// A login token stops working after this long without being used.
+export const TOKEN_TTL_MS = 90 * 86400000
+
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
   CREATE TABLE IF NOT EXISTS users (
     id          TEXT PRIMARY KEY,
-    token       TEXT NOT NULL UNIQUE,
-    created_at  TEXT NOT NULL
+    token                  TEXT NOT NULL UNIQUE,
+    created_at             TEXT NOT NULL,
+    token_issued_at        TEXT,
+    token_expires_at       TEXT,
+    prev_token             TEXT,
+    prev_token_expires_at  TEXT
   );
 
   CREATE TABLE IF NOT EXISTS trips (
@@ -74,3 +81,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS suggestions_trip ON suggestions (trip_id);
   CREATE INDEX IF NOT EXISTS votes_trip ON votes (trip_id);
 `)
+
+// v1: databases created before tokens expired get the expiry/rotation columns.
+if (db.prepare('PRAGMA user_version').get().user_version < 1) {
+  const has = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name))
+  db.exec('BEGIN')
+  for (const col of ['token_issued_at', 'token_expires_at', 'prev_token', 'prev_token_expires_at']) {
+    if (!has.has(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`)
+  }
+  // Existing tokens get a full lifetime from now; they'll be rotated on next use.
+  db.prepare('UPDATE users SET token_issued_at = created_at, token_expires_at = ? WHERE token_expires_at IS NULL')
+    .run(new Date(Date.now() + TOKEN_TTL_MS).toISOString())
+  db.exec('PRAGMA user_version = 1')
+  db.exec('COMMIT')
+}

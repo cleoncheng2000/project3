@@ -26,7 +26,9 @@ own PC with a tunnel such as `cloudflared tunnel --url http://localhost:5173`.
 
 ## How it works
 - **Identity:** each browser gets a random token (stored in localStorage); you just type your name
-  when joining. A different browser/device counts as a different person.
+  when joining. A different browser/device counts as a different person. The token is only sent in
+  the `Authorization` header, is replaced about once a day, and stops working after 90 days unused
+  (that browser then starts over as a new person).
 - **Slots:** click **+ Suggest** on an empty hour. Times default to 1 hour but can be changed.
 - **Voting:** one vote per person per slot (click again to remove). Most votes wins; ties go to the earliest suggestion.
 - **Travel** is its own suggestion type with a from/to address and mode; it's drawn as a line on the map.

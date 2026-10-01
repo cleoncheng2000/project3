@@ -2,7 +2,7 @@ import express from 'express'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { db } from './db.js'
+import { db, TOKEN_TTL_MS } from './db.js'
 
 const PROD = process.argv.includes('--prod')
 const PORT = Number(process.env.PORT) || 5173
@@ -30,17 +30,57 @@ function broadcast(tripId) {
 }
 
 // ---------- Auth: each browser gets a random token, no passwords ----------
+// Tokens only travel in the Authorization header (never in URLs, which end up in logs and
+// history). They expire after TOKEN_TTL_MS without use and are swapped for a new one about
+// once a day; the old token keeps working briefly so in-flight requests and other tabs don't fail.
+
+const DAY = 86400000
+const ROTATE_AFTER_MS = DAY
+const PREV_TOKEN_GRACE_MS = 2 * 60000
+const later = (ms) => new Date(Date.now() + ms).toISOString()
+const newToken = () => randomBytes(24).toString('hex')
 
 function userFromToken(token) {
-  return token ? db.prepare('SELECT id FROM users WHERE token = ?').get(token) : undefined
+  if (!token) return undefined
+  return db
+    .prepare(
+      `SELECT id, token = :token AS current, token_issued_at, token_expires_at FROM users
+       WHERE (token = :token AND token_expires_at > :now)
+          OR (prev_token = :token AND prev_token_expires_at > :now)`,
+    )
+    .get({ token, now: now() })
 }
 
 function auth(req, _res, next) {
-  const token = (req.get('authorization') || '').replace(/^Bearer /, '') || req.query.token
+  const [, token] = (req.get('authorization') || '').match(/^Bearer (\S+)$/) || []
   const user = userFromToken(token)
   if (!user) return next(new HttpError(401, 'Not signed in'))
+  // Sliding expiry: using the token pushes its expiry out (written at most once a day).
+  if (user.current && user.token_expires_at < later(TOKEN_TTL_MS - DAY)) {
+    db.prepare('UPDATE users SET token_expires_at = ? WHERE id = ?').run(later(TOKEN_TTL_MS), user.id)
+  }
+  req.user = user
   req.userId = user.id
   next()
+}
+
+// EventSource can't send headers, so the live-updates stream is opened with a short-lived,
+// single-use ticket for one trip instead of the login token.
+const TICKET_TTL_MS = 60000
+const tickets = new Map() // ticket -> { tripId, userId, expires }
+
+function issueTicket(tripId, userId) {
+  for (const [t, v] of tickets) if (v.expires < Date.now()) tickets.delete(t)
+  const ticket = newToken()
+  tickets.set(ticket, { tripId, userId, expires: Date.now() + TICKET_TTL_MS })
+  return ticket
+}
+
+function redeemTicket(ticket, tripId) {
+  const t = typeof ticket === 'string' && tickets.get(ticket)
+  if (t) tickets.delete(ticket)
+  if (!t || t.expires < Date.now() || t.tripId !== tripId) throw new HttpError(401, 'Invalid or expired ticket')
+  return t.userId
 }
 
 function requireMember(tripId, userId) {
@@ -103,9 +143,22 @@ function suggestionFields(body) {
 const api = express.Router()
 
 api.post('/session', (_req, res) => {
-  const user = { id: randomUUID(), token: randomBytes(24).toString('hex') }
-  db.prepare('INSERT INTO users (id, token, created_at) VALUES (?, ?, ?)').run(user.id, user.token, now())
+  const user = { id: randomUUID(), token: newToken() }
+  db.prepare('INSERT INTO users (id, token, created_at, token_issued_at, token_expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(user.id, user.token, now(), now(), later(TOKEN_TTL_MS))
   res.json({ userId: user.id, token: user.token })
+})
+
+// Called on page load. Hands back a replacement token once the current one is a day old.
+api.post('/session/refresh', auth, (req, res) => {
+  const { user } = req
+  if (!user.current || user.token_issued_at > later(-ROTATE_AFTER_MS)) return res.json({ userId: user.id })
+  const token = newToken()
+  db.prepare(
+    `UPDATE users SET prev_token = token, prev_token_expires_at = ?,
+       token = ?, token_issued_at = ?, token_expires_at = ? WHERE id = ?`,
+  ).run(later(PREV_TOKEN_GRACE_MS), token, now(), later(TOKEN_TTL_MS), user.id)
+  res.json({ userId: user.id, token })
 })
 
 api.get('/me', auth, (req, res) => res.json({ userId: req.userId }))
@@ -246,11 +299,15 @@ api.put('/slots/:id/vote', auth, (req, res) => {
   res.json({ ok: true })
 })
 
-api.get('/trips/:id/events', auth, (req, res) => {
+api.post('/trips/:id/events/ticket', auth, (req, res) => {
   const trip = requireMember(req.params.id, req.userId)
+  res.json({ ticket: issueTicket(trip.id, req.userId) })
+})
+
+api.get('/trips/:id/events', (req, res) => {
+  const trip = requireMember(req.params.id, redeemTicket(req.query.ticket, req.params.id))
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
   res.flushHeaders()
-  res.write('retry: 3000\n\n')
   if (!listeners.has(trip.id)) listeners.set(trip.id, new Set())
   listeners.get(trip.id).add(res)
   const ping = setInterval(() => res.write(': ping\n\n'), 25000)
